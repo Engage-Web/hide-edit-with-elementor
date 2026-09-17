@@ -8,7 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Plugin Name: Hide Edit With Elementor
  * Description: Hide the Edit With Elementor button and links for pages and posts that you do not want it used for eg. a front page with custom fields.
  * Plugin URI:  https://www.engaghewe.co.uk/web-services/wordpress-plugin-development
- * Version:     1.2.0
+ * Version:     1.2.1
  * Author:      Engage Web, Nick Arkell
  * Author URI:  https://www.engageweb.co.uk
  * Text Domain: hide-edit-with-elementor
