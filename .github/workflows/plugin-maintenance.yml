@@ -20,132 +20,15 @@ concurrency:
   group: hide-edit-with-elementor-wordpress-org-release
   cancel-in-progress: false
 
-env:
-  PLUGIN_SLUG: hide-edit-with-elementor
-  PLUGIN_FILE: hide-edit-with-elementor.php
-  PLUGIN_NAME: Hide Edit With Elementor
-
 jobs:
-  check-and-release:
+  release:
     name: Check and prepare release
     if: github.ref == 'refs/heads/main' && inputs.confirm_release
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout plugin
-        uses: actions/checkout@v6
-
-      - name: Install Subversion
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes subversion
-
-      - name: Validate release
-        env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
-          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "$SVN_USERNAME" || -z "$SVN_PASSWORD" ]]; then
-            echo "SVN_USERNAME and SVN_PASSWORD secrets are required." >&2
-            exit 1
-          fi
-          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "Release version must contain two or three numeric components." >&2
-            exit 1
-          fi
-          current_header="$(php -r '$s=file_get_contents($argv[1]); if (!preg_match("/^\\s*\\*?\\s*Version:\\s*([0-9]+(?:\\.[0-9]+){1,2})/mi", $s, $m)) exit(1); echo $m[1];' "$PLUGIN_FILE")"
-          current_stable="$(sed -n 's/^Stable tag:[[:space:]]*//p' readme.txt | head -1 | tr -d '\r' | xargs)"
-          newest_current="$(printf '%s\n%s\n' "$current_header" "$current_stable" | sort -V | tail -1)"
-          if [[ "$RELEASE_VERSION" == "$newest_current" || "$(printf '%s\n%s\n' "$RELEASE_VERSION" "$newest_current" | sort -V | tail -1)" != "$RELEASE_VERSION" ]]; then
-            echo "Release version ${RELEASE_VERSION} must be newer than ${newest_current}." >&2
-            exit 1
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_VERSION}" >/dev/null 2>&1; then
-            echo "Git tag ${RELEASE_VERSION} already exists." >&2
-            exit 1
-          fi
-          if svn info "https://plugins.svn.wordpress.org/${PLUGIN_SLUG}/tags/${RELEASE_VERSION}" >/dev/null 2>&1; then
-            echo "WordPress.org tag ${RELEASE_VERSION} already exists." >&2
-            exit 1
-          fi
-
-      - name: Update release metadata
-        env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          php -r '$f=$argv[1];$v=$argv[2];$s=file_get_contents($f);$n=0;$s=preg_replace_callback("/^(\\s*\\*?\\s*Version:\\s*)[0-9]+(?:\\.[0-9]+){1,2}/mi",fn($m)=>$m[1].$v,$s,1,$n);if($n!==1){fwrite(STDERR,"Could not update plugin version.\n");exit(1);}file_put_contents($f,$s);' "$PLUGIN_FILE" "$RELEASE_VERSION"
-          php -r '$f=$argv[1];$v=$argv[2];$s=file_get_contents($f);$n=0;$s=preg_replace_callback("/^(Stable tag:\\s*).+$/mi",fn($m)=>$m[1].$v,$s,1,$n);if($n!==1){fwrite(STDERR,"Could not update Stable tag.\n");exit(1);}file_put_contents($f,$s);' readme.txt "$RELEASE_VERSION"
-
-      - name: Build clean WordPress.org package
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf "build/${PLUGIN_SLUG}"
-          mkdir -p "build/${PLUGIN_SLUG}"
-          rsync -av ./ "build/${PLUGIN_SLUG}/" \
-            --exclude=.git \
-            --exclude=.github \
-            --exclude=.gitignore \
-            --exclude=.distignore \
-            --exclude=_notes \
-            --exclude=build \
-            --exclude=node_modules \
-            --exclude=tests \
-            --exclude='package*.json' \
-            --exclude='playwright.config.*' \
-            --exclude=scripts
-
-      - name: Run WordPress Plugin Check
-        uses: wordpress/plugin-check-action@v1
-        with:
-          build-dir: build/hide-edit-with-elementor
-
-      - name: Create installable plugin ZIP
-        run: |
-          cd build
-          zip -r "${PLUGIN_SLUG}.zip" "${PLUGIN_SLUG}"
-
-      - name: Upload installable plugin ZIP
-        uses: actions/upload-artifact@v6
-        with:
-          name: hide-edit-with-elementor-plugin-${{ github.sha }}
-          path: build/hide-edit-with-elementor.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Commit and tag checked release
-        env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "Engage Web Plugin Bot"
-          git config user.email "plugins@engageweb.co.uk"
-          git add "$PLUGIN_FILE" readme.txt
-          git commit -m "Release ${PLUGIN_NAME} ${RELEASE_VERSION}"
-          git tag -a "$RELEASE_VERSION" -m "${PLUGIN_NAME} ${RELEASE_VERSION}"
-          git push --atomic origin HEAD:main "refs/tags/${RELEASE_VERSION}"
-
-      - name: Deploy to WordPress.org
-        env:
-          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
-          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p wordpress-svn
-          svn checkout "https://plugins.svn.wordpress.org/${PLUGIN_SLUG}/trunk" wordpress-svn/trunk
-          rsync -av --delete --exclude=.svn "build/${PLUGIN_SLUG}/" wordpress-svn/trunk/
-          mapfile -t missing_paths < <(svn status wordpress-svn/trunk | sed -n 's/^!       //p')
-          for path in "${missing_paths[@]}"; do
-            svn rm --force "$path"
-          done
-          svn add --force wordpress-svn/trunk
-          svn commit wordpress-svn/trunk --username "$SVN_USERNAME" --password "$SVN_PASSWORD" --non-interactive --no-auth-cache -m "Update trunk for ${RELEASE_VERSION}"
-          svn copy "https://plugins.svn.wordpress.org/${PLUGIN_SLUG}/trunk" "https://plugins.svn.wordpress.org/${PLUGIN_SLUG}/tags/${RELEASE_VERSION}" --username "$SVN_USERNAME" --password "$SVN_PASSWORD" --non-interactive --no-auth-cache -m "Tag ${RELEASE_VERSION}"
+    uses: Engage-Web/github-actions/.github/workflows/wordpress-plugin-release.yml@main
+    with:
+      plugin_slug: hide-edit-with-elementor
+      plugin_file: hide-edit-with-elementor.php
+      plugin_name: Hide Edit With Elementor
+      release_version: ${{ inputs.release_version }}
+      profile: legacy
+    secrets: inherit
